@@ -1,0 +1,186 @@
+dane1 <- read.csv("avgIQpercountry.csv")
+
+library(shiny)
+
+ui <- fluidPage(
+  
+  titlePanel(h3("Średnie globalne IQ")),
+  
+  sidebarLayout(
+    sidebarPanel(
+      h4("Wybór wykresu"),
+      br(),
+      helpText(strong("Wykres 1: Średnie IQ w poszczególnych państwach:")),
+      
+      selectInput("kontynent",
+                  label = "Wybierz kontynent",
+                  choices = c("Europa",
+                              "Azja",
+                              "Afryka",
+                              "Oceania",
+                              "Europa/Azja",
+                              "Ameryka Północna",
+                              "Ameryka Centralna",
+                              "Ameryka Południowa"),
+                  selected = "Europa"),
+      
+      br(),
+      helpText(strong("Wykres 2: Korelacja zmiennych z wysokością średniego IQ:")),
+      
+      selectInput("zmienna",
+                  label = "Wybierz zmienną",
+                  choices = c("Średnia długość nauki w latach",
+                              "Odsetek alfabetyzacji",
+                              "Współczynnik HDI w 2021 roku"),
+                  selected = "Średnia długość nauki w latach"),
+      br(),
+      helpText(strong("Wykres 3: Histogram - rozkład zmiennej:")),
+      
+      selectInput("zmiennahist",
+                  label = "Wybierz zmienną",
+                  choices = c("Średni poziom IQ",
+                              "Nagrody Nobla",
+                              "HDI w 2021 roku",
+                              "Współczynnik alfabetyzacji",
+                              "Średnia ilość lat nauki w szkole",
+                              "GNI w 2021 roku"),
+                  selected = "Średni poziom IQ"),
+      
+      sliderInput("bins",
+                  label = "Ilość przedziałów:",
+                  min = 5,
+                  max = 50,
+                  value = 20),
+      br(),
+      helpText(strong("Wykres 4: Średnie IQ, średnia długość nauki w szkole, współczynnik alfabetyzacji:")),
+      
+      selectInput("kont",
+                  label = "Wybierz kontynent",
+                  choices = c("Cały Świat",
+                              "Europa",
+                              "Afryka",
+                              "Azja",
+                              "Oceania",
+                              "Europa/Azja",
+                              "Ameryka Północna",
+                              "Ameryka Centralna",
+                              "Ameryka Południowa"),
+                  selected = "Europa")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Wykres 1", plotOutput("wykres_barplot")),
+        tabPanel("Wykres 2", plotOutput("wykres_korelacja")),
+        tabPanel("Wykres 3", plotOutput("wykres_histogram")),
+        tabPanel("Wykres 4", plotOutput("wykres_bubble"))
+      )
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  output$wykres_barplot <- renderPlot({
+    
+    dane_kontynent <- switch(input$kontynent,
+                             "Europa" = dane1[dane1$Continent == "Europe", ],
+                             "Azja" = dane1[dane1$Continent == "Asia", ],
+                             "Afryka" = dane1[dane1$Continent == "Africa", ],
+                             "Oceania" = dane1[dane1$Continent == "Oceania", ],
+                             "Europa/Azja" = dane1[dane1$Continent == "Europe/Asia", ],
+                             "Ameryka Północna" = dane1[dane1$Continent == "North America", ],
+                             "Ameryka Centralna" = dane1[dane1$Continent == "Central America", ],
+                             "Ameryka Południowa" = dane1[dane1$Continent == "South America", ])
+    
+    kolor_kontynent <- switch(input$kontynent,
+                              "Europa" = "darkgreen",
+                              "Azja" = "darkorange",
+                              "Afryka" ="red",
+                              "Oceania" = "lightblue",
+                              "Europa/Azja" = "grey",
+                              "Ameryka Północna" = "lightyellow",
+                              "Ameryka Centralna" = "lightgreen",
+                              "Ameryka Południowa" = "purple")
+    
+    a2 <- barplot(dane_kontynent$Average.IQ, 
+                  names.arg = dane_kontynent$Country,
+                  col = kolor_kontynent,
+                  las = 1,
+                  main = paste("Średnia IQ na kontynencie", input$kontynent),
+                  ylab = "Średnia IQ",
+                  ylim = c(0, max(dane_kontynent$Average.IQ) + 5),
+                  las =2)
+    text(a2, dane_kontynent$Average.IQ, 
+         labels = round(dane_kontynent$Average.IQ), 
+         pos = 3, 
+         cex = 0.8, 
+         col = "black")
+  })
+  
+  output$wykres_korelacja <- renderPlot({
+    
+    dane_zmienna <- switch(input$zmienna,
+                           "Średnia długość nauki w latach" = dane1$Mean.years.of.schooling...2021,
+                           "Odsetek alfabetyzacji" = dane1$Literacy.Rate,
+                           "Współczynnik HDI w 2021 roku" = dane1$HDI..2021.)
+    
+    kolor_zmienna <- switch(input$zmienna,
+                            "Średnia długość nauki w latach" = "violet",
+                            "Odsetek alfabetyzacji" = "darkblue",
+                            "Współczynnik HDI w 2021 roku" = "darkgreen")
+    
+    plot(dane1$Average.IQ ~ dane_zmienna,
+         col = kolor_zmienna,
+         pch = 16,
+         main = paste("Korelacja średniej wartośći IQ i zmiennej", tolower(input$zmienna)),
+         xlab = input$zmienna,
+         ylab = "Średnia wartość IQ")
+  })
+  
+  output$wykres_histogram <- renderPlot({
+    
+    dane_histogram <- switch(input$zmiennahist,
+                             "Średni poziom IQ" = dane1$Average.IQ,
+                             "Nagrody Nobla" = dane1$Nobel.Prices,
+                             "HDI w 2021 roku" = dane1$HDI..2021.,
+                             "Współczynnik alfabetyzacji" = dane1$Literacy.Rate,
+                             "Średnia ilość lat nauki w szkole" = dane1$Mean.years.of.schooling...2021,
+                             "GNI w 2021 roku" = dane1$GNI...2021)
+    
+    hist(dane_histogram, 
+         breaks = input$bins, 
+         col = "lightpink",
+         xlab = input$zmiennahist,
+         ylab = "Częstotliwość",
+         main = paste("Histogram zmiennej", tolower(input$zmiennahist)))
+  })
+  
+  output$wykres_bubble <- renderPlot({
+    
+    dane_bubble <- switch(input$kont,
+                          "Cały Świat" = dane1,
+                          "Europa" = dane1[dane1$Continent == "Europe", ],
+                          "Afryka" = dane1[dane1$Continent == "Africa", ],
+                          "Azja" = dane1[dane1$Continent == "Asia", ],
+                          "Oceania" = dane1[dane1$Continent == "Oceania", ],
+                          "Europa/Azja" = dane1[dane1$Continent == "Europe/Asia", ],
+                          "Ameryka Północna" = dane1[dane1$Continent == "North America", ],
+                          "Ameryka Centralna" = dane1[dane1$Continent == "Central America", ],
+                          "Ameryka Południowa" = dane1[dane1$Continent == "South America", ])
+    
+    
+    radius <- sqrt(dane_bubble$Literacy.Rate/pi)
+    symbols(dane_bubble$Mean.years.of.schooling...2021, dane_bubble$Average.IQ, circles = radius, 
+            inches = 0.15, 
+            fg="white", 
+            bg="lightgreen",
+            xlab = "Średnia długość nauki w szkole",
+            ylab = "Średnia wartość IQ",
+            main = input$kont)
+    text(dane_bubble$Mean.years.of.schooling...2021, dane_bubble$Average.IQ, dane_bubble$Country, cex = 0.75)
+  })
+  
+}
+
+shinyApp(ui = ui, server = server)

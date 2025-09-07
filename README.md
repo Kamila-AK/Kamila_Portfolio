@@ -9,5 +9,5 @@
 ### [Project 2: Student Data Visualization Project in R - Global IQ](https://kamila109507.shinyapps.io/kamila-projekt/)
 - The goal of this project was to create simple interactive data visualizations in R.
 - Data used comes from [Kaggle](https://www.kaggle.com/datasets/mlippo/average-global-iq-per-country-with-other-stats).
-- The code can be accessed here.
+- The code can be accessed [here](https://github.com/Kamila-AK/Kamila_Portfolio/blob/cf58d9ce24d68797624dbffcb0dc13d72b78afa3/Project%202%20Code).
 - Interactive web application was created using the Shiny package in R.

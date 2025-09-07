@@ -3,7 +3,7 @@
 ### Project 1: Master Thesis Project PLACEHOLDER*
 - *The project cannot be published until the thesis is defended.
 - This project was undertaken with a goal of contributing to research regarding factors influencing women to join or re-join the workforce after childbirth in Poland and the Czech Republic.
-- Data used in the project was obtained through the [Generations and Gender Programmme Institution](https://www.ggp-i.org/generations-and-gender-survey/) after obtaining access through required permits.
+- Data used in the project was obtained through the [Generations and Gender Programme Institution](https://www.ggp-i.org/generations-and-gender-survey/) after obtaining access through required permits.
 - Algorithms Used in the project: Logistic Regression using the Statsmodels Python package, Logistic Regression with ElastiNet Regularization using the Scikit-learn Python package. Additionally, data was first imputed with the MICE method.
 
 ### [Project 2: Student Data Visualization Project in R - Global IQ](https://kamila109507.shinyapps.io/kamila-projekt/)

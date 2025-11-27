@@ -1,0 +1,1843 @@
+
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+import missingno as msno
+from scipy.stats import mannwhitneyu
+from scipy.stats import chi2_contingency
+import miceforest as mf
+from sklearn.preprocessing import OneHotEncoder
+import random
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import auc, classification_report, confusion_matrix, roc_curve, roc_auc_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.model_selection import train_test_split, cross_val_score
+from functools import partial
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import RandomOverSampler
+from imblearn.pipeline import Pipeline
+from sklearn.ensemble import GradientBoostingClassifier as GBC
+from sklearn.ensemble import RandomForestClassifier as RFC
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.tree import DecisionTreeClassifier as CART
+from sklearn.tree import plot_tree
+import statsmodels.api as sm
+from statsmodels.tools.sm_exceptions import PerfectSeparationError
+import numpy.linalg as linalg
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+pd.options.mode.chained_assignment = None
+
+Dataset analysis - Poland
+Uploading the dataset, filtering the data, missing data analysis
+
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', category=UnicodeWarning)
+    df_poland = pd.read_stata(r'C:\Users\WQ\Documents\danepl\GGS_Wave1_Poland_V.4.4.dta')
+
+df_poland
+
+Amount of missing data in columns
+
+missing_values = df_poland.isna().sum()
+print("Missing data:\n", missing_values)
+
+df_poland.isna().all().sum()
+
+Drop fully empty columns
+
+df_poland = df_poland.dropna(axis=1, how='all')
+
+df_poland.shape
+
+Filtering the data based on the objective of analysis
+
+Only women
+
+df_poland = df_poland[df_poland['asex'] == 'female'].copy()
+
+Only persons with minimum 1 child
+
+df_poland = df_poland[df_poland['ankids'] >= 1].copy()
+
+Only persons whose youngest child is between 1 and 8 years old
+
+df_poland = df_poland[df_poland['ageyoungest'].between(1,8)].copy()
+
+Delete persons retired, ill, disabled
+
+df_poland = df_poland[~df_poland['a870'].isin(['retired', 'ill or disabled for a long time or permanently', 'other'])].copy()
+
+Change categorial variable to binary variable
+
+for val in df_poland['a870'].unique():
+    print(repr(val))
+
+df_poland['a874_bin'] = df_poland['a874'].isin(['probably yes', 'definitively yes']).astype(int)
+
+df_poland = df_poland.drop(['a874'],axis=1).copy()
+
+Delete unnecessary variables
+
+df_poland = df_poland.drop(['acountry','arid','amonth','ayear', 'Int_pres', 'a1115a', 'asex', 'Int_st'],axis=1)
+
+df_poland.shape
+
+Missing data analysis
+
+for col in df_poland.columns:
+    if isinstance(df_poland[col].dtype, pd.CategoricalDtype):
+        df_poland[col] = df_poland[col].replace('not applicable/no response', np.nan)
+        df_poland[col] = df_poland[col].cat.remove_unused_categories()
+    else:
+        df_poland[col] = df_poland[col].replace('not applicable/no response', np.nan)
+
+Percentage of column that is missing
+
+missing_counts = df_poland.isnull().sum()
+missing_percent = (missing_counts / len(df_poland)) * 100
+
+high_na_cols = missing_percent[missing_percent > 70].index
+
+len(high_na_cols)
+
+Drop columns which are over 70% empty
+
+df_poland = df_poland.drop(columns=high_na_cols)
+
+Percentage of row that is missing
+
+missing_counts_rows = df_poland.isnull().sum(axis=1)
+missing_percent_rows = (missing_counts_rows / df_poland.shape[1]) * 100
+
+high_na_rows = missing_percent_rows[missing_percent_rows > 95].index
+
+len(high_na_rows)
+
+df_poland.shape
+
+Change categorial columns into numerical columns
+
+converted_columns = []
+
+for col in df_poland.select_dtypes(include=['object', 'category']).columns:
+    unique_count = df_poland[col].nunique(dropna=True)
+    
+    if unique_count >= 10:  
+        converted = pd.to_numeric(df_poland[col], errors='coerce')
+        if converted.notna().sum() / len(df_poland) > 0.65:
+            df_poland[col] = converted
+            converted_columns.append(col)
+
+print("Changed to numerical:", converted_columns)
+
+Check columns that were not changed
+
+problematic_columns = []
+
+for col in df_poland.select_dtypes(include=['object', 'category']).columns:
+    converted = pd.to_numeric(df_poland[col], errors='coerce')
+    ratio = converted.notna().sum() / len(df_poland)
+
+    if ratio > 0.65:
+        df_poland[col] = converted
+        converted_columns.append(col)
+    else:
+        problematic_columns.append((col, ratio))
+
+for col, ratio in problematic_columns:
+    print(f"Column '{col}' NOT converted")
+    print("Uniqual values:", df_poland[col].unique()[:10])
+    print("---")
+
+Convert columns manually where valid
+
+df_poland['ahg5_4'].dtypes
+
+df_poland['ahg5_4'] = df_poland['ahg5_4'].replace({
+    '14 or younger': 14.0,
+    '86 or older': 86
+})
+
+df_poland['ahg5_4'] = df_poland['ahg5_4'].astype(float)
+
+df_poland['ahg5_4'].dtypes
+
+df_poland['a202'].dtypes
+
+new_categories = [cat.split('=')[0] for cat in df_poland['a202'].cat.categories]
+
+df_poland['a202'] = df_poland['a202'].cat.rename_categories(new_categories)
+
+df_poland['a202'].dtypes
+
+df_poland['a205'].dtypes
+
+df_poland['a205'] = df_poland['a205'].replace('does not pay for child care', 0)
+df_poland['a205'] = df_poland['a205'].astype(float)
+
+df_poland['a205'].dtypes
+
+df_poland['a402'].dtypes
+
+new_categories_a402 = [cat.split('=')[0] for cat in df_poland['a402'].cat.categories]
+
+df_poland['a402'] = df_poland['a402'].cat.rename_categories(new_categories_a402)
+
+df_poland['a402'].dtypes
+
+df_poland['a407'].dtypes
+
+new_categories_a407 = [cat.split('=')[0] for cat in df_poland['a407'].cat.categories]
+
+df_poland['a407'] = df_poland['a407'].cat.rename_categories(new_categories_a407)
+
+df_poland['a407'].dtypes
+
+df_poland['a522'].dtypes
+
+new_categories_a522 = [cat.split('=')[0] for cat in df_poland['a522'].cat.categories]
+
+df_poland['a522'] = df_poland['a522'].cat.rename_categories(new_categories_a522)
+
+df_poland['a522'].dtypes
+
+df_poland['a542'].dtypes
+
+new_categories_a542 = [cat.split('=')[0] for cat in df_poland['a542'].cat.categories]
+
+df_poland['a542'] = df_poland['a542'].cat.rename_categories(new_categories_a542)
+
+df_poland['a542'].dtypes
+
+df_poland['a5107'].dtypes
+
+df_poland['a5107'] = df_poland['a5107'].cat.rename_categories([0.0,1.0,2.0,3.0,4.0])
+
+df_poland['a5107'].dtypes
+
+df_poland['a839'].dtypes
+
+new_categories_a839 = [cat.split('=')[0] for cat in df_poland['a839'].cat.categories]
+
+df_poland['a839'] = df_poland['a839'].cat.rename_categories(new_categories_a839)
+
+df_poland['a839'].dtypes
+
+df_poland['a847'].dtypes
+
+new_categories_a847 = [cat.split('=')[0] for cat in df_poland['a847'].cat.categories]
+
+df_poland['a847'] = df_poland['a847'].cat.rename_categories(new_categories_a847)
+
+df_poland['a847'].dtypes
+
+df_poland['a203c_1'].dtypes
+
+kolumny = ['a203c_1','a204c_1','a253y_2','a540h','a540t','a541','a626','a833y','a835','a1008']
+
+for kolumna in kolumny:
+    df_poland[kolumna] = pd.to_numeric(df_poland[kolumna], errors='coerce')
+    df_poland[kolumna] = df_poland[kolumna].astype(float)
+
+df_poland['a253y_2'].dtypes
+
+Outlier analysis
+
+Split the dataset into categorial and continuous sets
+
+continuous_vars1 = []
+
+for var in df_poland.columns:
+    if df_poland[var].nunique() >= 20: 
+        continuous_vars1.append(var)
+
+exclude = ['a106a_1', 'a149', 'a309', 'a380', 'a832', 'a921', 'a5108_1', 'a5112', 'a5114']
+continuous_vars = [item for item in continuous_vars1 if item not in exclude]
+
+continuous_df = df_poland[continuous_vars]
+
+len(continuous_vars)
+
+categorical_vars = [item for item in df_poland.columns if item not in continuous_vars]
+
+categorical_df = df_poland[categorical_vars]
+
+len(categorical_vars)
+
+Create boxplots for continuous variables
+
+for var in continuous_df.columns:
+    sns.boxplot(y=df_poland[var], color="lightgray")
+    plt.title(f"Boxplot for {var}")
+    plt.ylabel(var)
+    plt.show()
+
+Interquartile range calculation
+
+def detect_outliers_iqr(df_poland, column):
+    Q1 = df_poland[column].quantile(0.25)
+    Q3 = df_poland[column].quantile(0.75)
+    IQR = Q3 - Q1
+
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    outliers = df_poland[(df_poland[column] < lower_bound) | (df_poland[column] > upper_bound)]
+    
+    return outliers
+
+for col in continuous_df.columns:
+    outliers = detect_outliers_iqr(df_poland, col)
+    top_outliers = df_poland[col].nlargest(5)
+    srednia = df_poland[col].mean()
+    print(f"{col}: \n{len(outliers)} outliers, \n{top_outliers}, \n Mean: {srednia} \n")
+
+kolumny1 = ['a119','a204c_1','a205','a302bTdiff',
+            'a315AgeP','a373y','a383','a520h','a521',
+            'a540h','a541','a938_2600', 'a1008','a1008mnth',
+            'a1102','a1102mnth']
+
+for col in kolumny1:
+    outliers = detect_outliers_iqr(df_poland, col)
+    top_outliers = df_poland[col].nlargest(5)
+    srednia = df_poland[col].mean()
+    print(f"{col}: \n{len(outliers)} outliers, \n{top_outliers}, \n Mean: {srednia} \n")
+
+df_poland['a1102'].value_counts().sort_index()
+
+Drop outliers
+
+df_poland = df_poland[df_poland['a119'] != 32.0]
+df_poland = df_poland[~df_poland['a1102'].isin([223.0,111.0,55.0])]
+
+Check for duplicates
+
+print(df_poland.duplicated().sum())
+
+Variable distribution
+
+for var in continuous_df:
+    plt.figure(figsize=(5, 3))
+    sns.histplot(df_poland[var].dropna(), bins=30, kde=True, color="lightgray", edgecolor="black", stat="density")
+    plt.title(f"Distribution of {var}", fontsize=12, fontweight='bold')
+    plt.xlabel(var, fontsize=12, labelpad=15)
+    plt.ylabel("Density", fontsize=12, labelpad=15)
+    plt.tight_layout()
+    plt.show()
+
+for var in categorical_df.columns:
+    count_data = df_poland[var].value_counts(normalize=True) * 100
+    plt.figure(figsize=(5, 3))
+    sns.barplot(x=count_data.index, y=count_data.values, color='lightgray', edgecolor='black')
+    plt.title(f"Distribution of {var}", fontsize=12, fontweight = 'bold')
+    plt.ylabel("Percentage", fontsize=12)
+    plt.xlabel(var, fontsize=12)
+    plt.xticks(rotation=90)
+    plt.xticks(fontsize=10)
+    plt.yticks(fontsize=10)
+    plt.show()
+
+Drop unnecessary columns
+
+df_poland = df_poland.drop(['ahg6m_1', 'ahg6m_2', 'ahg6m_3', 'ahg6m_4', 'a111', 'a150m', 'a238', 
+              'a250','a105', 'a253m_1', 'a253m_2', 'a254_1', 'a254_2', 'a302bm',
+              'a303a', 'a306','a371m','a372bm','a373m','a374a','a384','a618_1','a833m',
+              'a871m','a1008u','a1101', 'a5116m', 'childprevp', 'ahg2_1', 'ahg2_2','ahg2_3', 
+              'ahg2_4', 'ahg3_1', 'ahg3_2', 'ahg3_3', 'ahg3_4', 'ahg4_1', 'ahg9_1', 'ahg9_2',
+             'ahg9_3', 'ahg9_4', 'a625', 'a714_2', 'a715_2','a717_2','a718_2','a831','a875',
+              'ahg1_1', 'ahg1_2','ahg1_3','ahg1_4'],axis=1)
+
+list_deleted = ['ahg6m_1', 'ahg6m_2', 'ahg6m_3', 'ahg6m_4', 'a111', 'a150m', 'a238', 
+              'a250','a105', 'a253m_1', 'a253m_2', 'a254_1', 'a254_2', 'a302bm',
+              'a303a', 'a306','a371m','a372bm','a373m','a374a','a384','a618_1','a833m',
+              'a871m','a1008u','a1101', 'a5116m', 'childprevp', 'ahg2_1', 'ahg2_2','ahg2_3', 
+              'ahg2_4', 'ahg3_1', 'ahg3_2', 'ahg3_3', 'ahg3_4', 'ahg4_1', 'ahg9_1', 'ahg9_2',
+             'ahg9_3', 'ahg9_4', 'a625', 'a714_2', 'a715_2','a717_2','a718_2','a831','a875',
+              'ahg1_1', 'ahg1_2','ahg1_3','ahg1_4']
+
+wspolne_cat = list(set(categorical_df.columns)&set(list_deleted))
+wspolne_cat
+
+categorical_df = categorical_df.drop(wspolne_cat, axis=1)
+
+wspolne_num = list(set(continuous_df.columns)&set(list_deleted))
+wspolne_num
+
+Missing data
+
+missing_num = df_poland.isna().sum()
+print(missing_num[missing_num > 0])
+
+Create missing data visualisations
+
+msno.matrix(df_poland)
+
+msno.matrix(df_poland[categorical_df.columns])
+
+msno.matrix(df_poland[continuous_df.columns])
+
+Calculate what percentage of column is missing
+
+missing_counts_2 = df_poland.isnull().sum()
+missing_percent_2 = (missing_counts_2 / len(df_poland)) * 100
+high_na_cols_2 = missing_percent_2[missing_percent_2 > 50].index
+for col in high_na_cols_2:
+    print(col)
+
+Create missing data matrix for numerical columns
+
+numerical_missing = continuous_df.isna().astype(int)
+numerical_missing
+
+Conduct Mann Whitney U test to determine if missing data is random or not
+
+num_results = []
+
+for target_col in continuous_df.columns: # Iterate by each numerical continuous column
+    missing_indicator = numerical_missing[target_col]
+
+    # Split numerical data into groups based on if target_cal is or is not missing, based on missing data matrix (numerical_missing)
+    group_with_data = continuous_df[missing_indicator == 0]
+    group_missing_data = continuous_df[missing_indicator == 1]
+
+    # Skip comparison if feature_col and target_col is the same
+    for feature_col in continuous_df.columns:
+        if feature_col == target_col:
+            continue
+
+        # Create the test set from groups with and without missing data
+        data_present = group_with_data[feature_col].dropna()
+        data_missing = group_missing_data[feature_col].dropna()
+
+        # Continue only if there are more than two instances in the groups
+        if len(data_present) > 2 and len(data_missing) > 2:
+            # Check variance in groups with and without missing data
+            var_present = data_present.var()
+            var_missing = data_missing.var()
+
+            # If variance equals 0 the test is not conducted
+            if var_present == 0 and var_missing == 0:
+                pval = None
+                interpretation = "No test, both groups have constant value"
+            else:
+                try:
+                    # Conduct test Mann-Whitneya U 
+                    # Compare the distribution of feature_col where target_col has data and where target_col has missing data
+                    stat, pval = mannwhitneyu(data_present, data_missing, alternative='two-sided')
+                    interpretation = (
+                        "Not random (possibly MAR/MNAR)"
+                        if pval < 0.05 else "No reason to reject MCAR"
+                    )
+                except ValueError:
+                    pval = None
+                    interpretation = "No test - error"
+        else:
+            pval = None
+            interpretation = "No test - to little data"
+
+        # Save the results
+        num_results.append({
+            'target_col': target_col, # Column with missing data
+            'feature_col': feature_col, # Column compared to target_col
+            'p_value': pval, # Result of the test
+            'mean_with_data': data_present.mean() if len(data_present) > 0 else None, # Mean of feature_col for the group without missing data
+            'mean_missing_data': data_missing.mean() if len(data_missing) > 0 else None, # Mean feature_col for the grouo with missing data
+            'count_with_data': len(data_present), # Size of the group with missing data
+            'count_missing_data': len(data_missing), # Size of the group without missing data
+            'interpretacja': interpretation # Comment, interpretation of the result
+        })
+
+num_results_df = pd.DataFrame(num_results)
+num_results_df_sorted = num_results_df.sort_values('p_value')
+num_results_df_sorted
+
+significant_results_testU = num_results_df[num_results_df['p_value'] < 0.05].sort_values('p_value')
+significant_results_testU
+
+mcar_u = num_results_df_sorted[num_results_df_sorted['interpretacja'].str.contains('No reason to reject MCAR', na=False)]
+mcar_u
+
+Select columns to impute with mean (MCAR columns)
+
+mcar_u = mcar_u.copy()
+missing_pct = df_poland.isna().mean() * 100
+mcar_u["missing_pct_in_data"] = mcar_u["target_col"].map(missing_pct)
+impute_mean_cols = mcar_u[(mcar_u['missing_pct_in_data'] < 20)]
+impute_mean_cols[['target_col', 'feature_col', 'p_value', 'mean_with_data', 'mean_missing_data', 'missing_pct_in_data']]
+
+for col in impute_mean_cols["target_col"].unique():
+    if col in df_poland.columns:
+        mean_val = df_poland[col].mean(skipna=True)
+        df_poland[col] = df_poland[col].fillna(mean_val)
+
+print(f"Mean imputed for columns: {list(impute_mean_cols['target_col'].unique())}")
+
+Create missing data matrix for categorial data
+
+cat_missing = categorical_df.isna().astype(int)
+cat_missing
+
+categorical_df = categorical_df.astype('category')
+
+Conduct chi-square test of independence
+
+# Reduction of rare categories, if a category consists of less than 1% of column it is added to 'INNE'
+def collapse_rare_categories(series, threshold=0.01):
+    freq = series.value_counts(normalize=True)
+    rare = freq[freq < threshold].index
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        return series.replace(rare, 'INNE')
+
+
+# Test the relation between missing data and other categorial variables
+def chi_square_missing_dependency_test(df_poland, max_missing_cols=10, cat_unique_max=50, rare_thresh=0.01, p_cutoff=0.05):
+    df_poland = df_poland.copy()
+
+    # Create the missing data matrix
+    missing_indicators = df_poland.isnull().astype(int)
+    missing_indicators.columns = [f"{col}_missing" for col in df_poland.columns]
+    
+    # Select columns with highest missing data percentage
+    top_missing_cols = df_poland.isnull().mean().sort_values(ascending=False).head(max_missing_cols).index
+    # Select variables with low cardinality
+    cat_cols = df_poland.select_dtypes(include=['object', 'category']).nunique()
+    cat_cols = cat_cols[cat_cols <= cat_unique_max].index.tolist()
+    
+    results = []
+
+    # For each column with missing data (miss_col) and categorial variable (cat_col):
+    for miss_col in top_missing_cols:
+        miss_col_ind = f"{miss_col}_missing"
+
+        # Skip if compared columns are the same
+        for cat_col in cat_cols:
+            if cat_col == miss_col:
+                continue
+
+            # Standardize rare categories
+            temp_cat = collapse_rare_categories(df_poland[cat_col], threshold=rare_thresh)
+            valid_idx = ~temp_cat.isnull()
+
+            # Create contingency table
+            contingency = pd.crosstab(
+                missing_indicators.loc[valid_idx, miss_col_ind],
+                temp_cat[valid_idx]
+            )
+
+            # Skip tables smaller than 2 rows or columns 
+            if contingency.shape[0] < 2 or contingency.shape[1] < 2:
+                continue
+
+            try:
+                # Conduct chi-square test
+                chi2, p, dof, expected = chi2_contingency(contingency)
+                interpretation = (
+                    "Not random (possibly MAR/MNAR)"
+                    if p < p_cutoff else "No reason to reject MCAR"
+                )
+
+                results.append({
+                    "missing_in": miss_col,
+                    "vs_variable": cat_col,
+                    "p_value": p,
+                    "chi2_stat": chi2,
+                    "dof": dof,
+                    "interpretation": interpretation
+                })
+            except Exception as e:
+                continue  # Skip errors
+
+    return pd.DataFrame(results).sort_values("p_value")
+
+cat_results_df = chi_square_missing_dependency_test(categorical_df)
+
+cat_results_df
+
+mcar_cols = cat_results_df[
+    cat_results_df['interpretation'].str.contains("No reason to reject MCAR", case=False)
+]['missing_in'].unique()
+
+columns_to_impute_mode = []
+
+for col in mcar_cols:
+    if col not in df_poland.columns:
+        continue
+    
+    missing_pct = df_poland[col].isnull().mean()
+    print(f"{col}: missing = {missing_pct:.2%}")
+    if missing_pct <= 0.2:
+        columns_to_impute_mode.append(col)
+
+columns_to_impute_mode
+
+Imputation
+
+Prepare categorial variables
+
+df_poland = df_poland.reset_index(drop=True)
+
+df_poland['a401a_c'].value_counts()
+
+df_poland['a401a_c'] = df_poland['a401a_c'].replace('always or usually someone not living in the household', 'always or usually other persons in the household')
+
+df_poland['a401a_c'].value_counts()
+
+df_poland['a405a_d'].value_counts()
+
+df_poland['a405a_d'] = df_poland['a405a_d'].replace('always or usually other persons in the household', 'R and partner equally')
+
+df_poland['a405a_d'].value_counts()
+
+df_poland['a1113_g'].value_counts()
+
+df_poland['a1113_g'] = df_poland['a1113_g'].replace('strongly disagree', 'disagree')
+
+df_poland['a1113_g'].value_counts()
+
+def group_rare_categories(series, min_freq=20):
+    freq = series.value_counts()
+    rare = freq[freq < min_freq].index
+    return series.apply(lambda x: 'rare' if x in rare else x)
+
+for col in ['aeduc','femeduc','ahg8_2','a148','a149','a201a_a','a201a_b','a203b_1','a204b_1','a251_2','a308',
+            'a309','a379','a380','a381','a401a_b','a405a_c','a405a_e','a405a_f','a517_1',
+            'a537_1','a5107','a620_1','a627_a','a627_b','a627_c','a627_h','a714_1','a717_1','a832','a864_1',
+            'a901','a940','a1006_1','a5113','a5115']:
+    df_poland[col] = group_rare_categories(df_poland[col])
+
+for col in df_poland.select_dtypes(include='object').columns:
+    df_poland[col] = df_poland[col].astype('category')
+
+Create kernel
+
+kernel = mf.ImputationKernel(
+    df_poland,
+    num_datasets=1,
+    random_state=1
+)
+
+kernel.mice(
+    2,
+    min_data_in_leaf=20,
+    num_leaves=31,
+    max_depth=-1
+)
+
+print(kernel)
+
+df_complete_pl = kernel.complete_data()
+
+df_complete_pl
+
+df_complete_pl.isna().sum().sum()
+
+df_complete_pl.shape
+
+df_complete_pl = df_complete_pl.drop(['a801','aactstat','a150y','a871y','a864_1'],axis=1)
+
+df_complete_pl.shape
+
+list_deleted = ['a801','aactstat','a150y','a871y','a864_1']
+
+wspolne_cat = list(set(categorical_df.columns)&set(list_deleted))
+wspolne_cat
+
+categorical_df = categorical_df.drop(wspolne_cat, axis=1)
+
+wspolne_num = list(set(continuous_df.columns)&set(list_deleted))
+wspolne_num
+
+continuous_df = continuous_df.drop(wspolne_num, axis=1)
+
+Save the complete data set into a file
+
+df_complete_pl.to_csv('df_complete_pl.csv', index=False)
+
+df_poland.to_csv('df_pl.csv',index=False)
+
+Show distribution plots for imputed numerical variables
+
+kernel.plot_imputed_distributions()
+
+def plot_distributions(df_original, df_imputed):
+    cols_with_na = [col for col in continuous_df.columns if df_original[col].isna().any()]
+
+    for col in cols_with_na:
+        plt.figure(figsize=(6, 4))
+        sns.kdeplot(df_original[col].dropna(), label='Original data', color='blue')
+        sns.kdeplot(df_imputed[col], label='Imputed data', color='orange')
+        plt.title(f"Distribution: {col}")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+plot_distributions(df_poland,df_complete_pl)
+
+Show summaries of both datasets
+
+df_poland.describe()
+
+df_complete_pl.describe()
+
+df_poland[continuous_df.columns].describe()
+
+df_complete_pl[continuous_df.columns].describe()
+
+df_complete_pl[categorical_df.columns].describe(include=['category'])
+
+df_poland[categorical_df.columns].describe(include=['category'])
+
+df_poland['a372bAgeR'].describe()
+
+One Hot Encoding
+
+df_complete_pl[categorical_df.columns] = df_complete_pl[categorical_df.columns].astype('category')
+
+Change all categorial data to string
+
+df_cat_pl = df_complete_pl.select_dtypes(include=['category']).astype(str)
+
+Create numerical data frame
+
+df_num_pl = df_complete_pl[continuous_df.columns]
+
+ohe = OneHotEncoder(sparse_output=False)
+
+ohe_data = ohe.fit_transform(df_cat_pl)
+ohe_data
+
+ohe.get_feature_names_out()
+
+Create data frame for colums with OHE
+
+ohe_df = pd.DataFrame(data=ohe_data, columns=ohe.get_feature_names_out(), index=df_poland.index)
+ohe_df
+
+df_complete_ohe_pl = pd.concat([df_num_pl, ohe_df], axis=1)
+
+df_complete_ohe_pl
+
+df_complete_ohe_pl.columns = df_complete_ohe_pl.columns.str.strip()
+
+Check OHE column
+
+df_complete_ohe_pl['ahhtype_couple with children'].value_counts()
+
+Save the complete dataset with OHE to a file
+
+df_complete_ohe_pl.to_csv('df_complete_ohe_pl.csv', index=False)
+
+Create the first dataset for analysis based on theory of the subject
+
+th_cols = ['aage', 'ahhtype', 'aeduc', 'amarstat', 'aparstat', 'a148', 'a149',
+'a150AgeR','a201a_a', 'a201a_b', 'a201a_c', 'a201a_d', 'a201a_e', 'a201a_f', 'a202',
+'a203a', 'a203b_1', 'a203c_1', 'a204a', 'a204b_1', 'a204c_1', 'a205', 'a302a',
+'a308', 'a309', 'a372bAgeR', 'a381', 'a383', 'a401a_a', 'a401a_b', 'a401a_c',
+'a401a_d_2600', 'a401a_e', 'a401a_f','a401a_g', 'a402', 'a405a_a', 'a405a_b',
+'a405a_c', 'a405a_d', 'a405a_e', 'a405a_f', 'a406', 'a501_2600', 'a519', 'a520hour',
+'a539', 'a540hour', 'a550', 'a627_b', 'a627_c', 'a627_e', 'a627_f', 'a627_h',
+'a627_j', 'a628_a', 'a628_b', 'a628_h', 'a628_i', 'a701', 'a835', 'a839', 'a844',
+'a855_a', 'a855_b', 'a855_c', 'a855_d', 'a871AgeR', 'a872',
+'a901', 'a923', 'a938_2600', 'a940', 'a1002', 'a1006_1', 'a1008', 'a1113_e',
+'a1113_f','a1109_1','a1109_2','a1109_3','a5114_1dig', 'a874_bin', 'a870']
+
+theory_pl = df_complete_pl[th_cols].copy()
+
+continuous_vars1T = []
+
+for var in theory_pl.columns:
+    if theory_pl[var].nunique() >= 20: 
+        continuous_vars1T.append(var)
+
+exclude = ['a106a_1', 'a149', 'a309', 'a380', 'a832', 'a921', 'a5108_1', 'a5112', 'a5114']
+continuous_varsT = [item for item in continuous_vars1T if item not in exclude]
+
+continuous_theory = theory_pl[continuous_varsT].copy()
+
+len(continuous_varsT)
+
+categorical_varsT = [item for item in theory_pl.columns if item not in continuous_varsT]
+
+len(categorical_varsT)
+
+categorical_theory = theory_pl[categorical_varsT].copy()
+
+One Hot Encoding for the created theory dataset
+
+theory_pl[categorical_theory.columns] = theory_pl[categorical_theory.columns].astype('category')
+
+theory_cat_pl = theory_pl.select_dtypes(include=['category']).astype(str)
+
+theory_num_pl = theory_pl[continuous_theory.columns]
+
+corr_matrix = theory_num_pl.corr()
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
+plt.title("Correlation matrix")
+plt.show()
+
+oheT = OneHotEncoder(sparse_output=False)
+
+ohe_data_theory = oheT.fit_transform(theory_cat_pl)
+ohe_data_theory
+
+ohe_df_theory = pd.DataFrame(data=ohe_data_theory, columns=oheT.get_feature_names_out(), index=theory_pl.index)
+ohe_df_theory
+
+df_th_ohe = pd.concat([theory_num_pl, ohe_df_theory], axis=1)
+
+df_th_ohe.columns = df_th_ohe.columns.str.strip()
+
+df_th_ohe.to_csv('df_th_ohe.csv', index=False)
+
+theory_pl.to_csv('theory_pl.csv', index=False)
+
+Create the second theory dataset for analysis
+
+theory_pl2_cols = [ 'aage', 'aeduc', 'aparstat', 'amarstat', 'a201a_a', 'a201a_b', 'a201a_c', 'a201a_d', 'a201a_e', 'a201a_f',
+'a202', 'a203a', 'a203b_1', 'a203c_1', 'a204a', 'a204b_1', 'a204c_1', 'a205', 'a302a', 'a372bAgeR', 'a401a_a', 'a401a_b', 
+'a401a_c', 'a401a_d_2600', 'a401a_e', 'a401a_f','a401a_g', 'a402','a405a_a', 'a405a_b','a405a_c', 'a405a_d', 'a405a_e', 
+'a405a_f', 'a501_2600', 'a627_b', 'a627_c', 'a627_e', 'a627_f', 'a627_j', 'a628_a', 'a628_b', 'a628_h', 'a628_i',
+'a629_a', 'a629_b', 'a629_c', 'a844', 'a845', 'a847', 'a839', 'a1002', 'a1008', 'a1107_e', 'a1110_b', 'a1110_c',
+'a1113_e', 'a1113_f', 'a1109_1', 'a1109_2', 'a1109_3', 'a874_bin', 'a870']
+
+theory_pl2 = df_complete_pl[theory_pl2_cols].copy()
+
+continuous_vars1T2 = []
+
+for var in theory_pl2.columns:
+    if theory_pl2[var].nunique() >= 20: 
+        continuous_vars1T2.append(var)
+
+exclude = ['a106a_1', 'a149', 'a309', 'a380', 'a832', 'a921', 'a5108_1', 'a5112', 'a5114']
+continuous_varsT2 = [item for item in continuous_vars1T2 if item not in exclude]
+
+continuous_theory2 = theory_pl2[continuous_varsT2].copy()
+
+categorical_varsT2 = [item for item in theory_pl2.columns if item not in continuous_varsT2]
+
+categorical_theory2 = theory_pl2[categorical_varsT2].copy()
+
+theory_pl2[categorical_theory2.columns] = theory_pl2[categorical_theory2.columns].astype('category')
+
+theory_cat_pl2 = theory_pl2.select_dtypes(include=['category']).astype(str)
+
+theory_num_pl2 = theory_pl2[continuous_theory2.columns]
+
+oheT2 = OneHotEncoder(sparse_output=False)
+
+ohe_data_theory2 = oheT2.fit_transform(theory_cat_pl2)
+ohe_data_theory2
+
+ohe_df_theory2 = pd.DataFrame(data=ohe_data_theory2, columns=oheT2.get_feature_names_out(), index=theory_pl2.index)
+ohe_df_theory2
+
+df_th_ohe2 = pd.concat([theory_num_pl2, ohe_df_theory2], axis=1)
+
+df_th_ohe2.columns = df_th_ohe2.columns.str.strip()
+
+df_th_ohe2.to_csv('df_th_ohe2.csv', index=False)
+
+ 
+
+Models - Poland
+1. Model based on theory
+
+Upload the encoded dataset with previously selected variables
+
+df_th_ohe = pd.read_csv('df_th_ohe.csv')
+
+df_th_ohe
+
+Create the target variable
+
+df_th_ohe['target'] = 0
+
+condit1 = ((df_th_ohe['a870_employed or self-employed'] == 1.0) |
+         (df_th_ohe['a870_helping family member in a family business or a farm'] == 1.0) |
+         (df_th_ohe['a870_student, in school, in vocational training'] == 1.0))
+
+condit2 = (((df_th_ohe['a870_looking after the home or family'] == 1.0) |
+         (df_th_ohe['a870_on maternity leave, parental leave or childcare leave'] == 1.0) |
+         (df_th_ohe['a870_unemployed'] == 1.0)) & (df_th_ohe['a874_bin_1'] == 1.0))
+
+df_th_ohe['target'] = np.where(condit1 | condit2, 1, 0)
+
+col_to_drop = [
+    'a870_employed or self-employed',
+    'a870_helping family member in a family business or a farm',
+    'a870_student, in school, in vocational training',
+    'a870_looking after the home or family',
+    'a870_on maternity leave, parental leave or childcare leave',
+    'a870_unemployed',
+    'a874_bin_1',
+    'a874_bin_0'
+]
+
+df_th_ohe.drop(columns=col_to_drop, inplace=True, axis=1)
+
+df_th_ohe.shape
+
+df_th_ohe['target'].value_counts()
+
+Split the dataset into training and testing subsets
+
+Xt = df_th_ohe.drop(["target"], axis=1)
+yt = df_th_ohe["target"]
+
+X_traint, X_testt, y_traint, y_testt = train_test_split(Xt, yt, test_size=0.3, random_state=1)
+
+Scale the data
+
+scaler = StandardScaler()
+X_train_scaledt = scaler.fit_transform(X_traint)
+X_test_scaledt = scaler.transform(X_testt)
+
+Resample the target variable
+
+ros = RandomOverSampler(random_state=1)
+X_train_resampledt, y_train_resampledt = ros.fit_resample(X_train_scaledt, y_traint)
+from collections import Counter
+print(Counter(y_train_resampledt))
+
+X_train -> X_train_resampled
+X_test -> X_test_scaled
+y_train -> y_train_resampled
+y_test
+Logistic regression with no regularization on the first selected dataset (theory dataset)
+
+Train the model
+
+model_th = LogisticRegression(penalty=None, max_iter=10000)
+LRT = model_th.fit(X_train_resampledt, y_train_resampledt)
+
+Model confusion matrix
+
+y_test_scaled_hatt = LRT.predict(X_test_scaledt)
+confmt = confusion_matrix(y_testt, y_test_scaled_hatt)
+confmt
+
+Calculate model accuracy, precision, recall, F1 score
+
+ACCT = (confmt[0, 0] + confmt[1, 1]) / np.sum(confmt)
+PRECT = (confmt[1, 1]) / (confmt[1, 1] + confmt[0, 1])
+RECT = (confmt[1, 1]) / (confmt[1, 1] + confmt[1, 0])
+F1T = 2 * PRECT * RECT / (PRECT + RECT)
+print("ACC ", ACCT, "\nPREC ", PRECT, "\nREC ", RECT, "\nF1 ", F1T)
+
+Calculate model AUC
+
+lrT_auc = roc_auc_score(y_testt, LRT.predict_proba(X_test_scaledt)[:, 1])
+print(f"AUC for logistic regression LRT: {lrT_auc:.3f}")
+
+ROC and AUC visualisation
+
+y_train_hatt = LRT.predict_proba(X_train_resampledt)[:,1]
+y_test_hatt = LRT.predict_proba(X_test_scaledt)[:,1]
+fprv, tprv, _ = roc_curve(y_testt, y_test_hatt)
+fprt, tprt, _ = roc_curve(y_train_resampledt, y_train_hatt)
+auc_rocv = auc(fprv, tprv)
+auc_roct = auc(fprt, tprt)
+
+plt.figure()
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC+AUC")
+
+plt.plot([0, 1], [0, 1], color="grey", linestyle="--", label="Random, AUC = 0.5")
+plt.plot([0, 0], [0, 1], color="navy", linestyle=":", label="Wizard, AUC = 1.0")
+plt.plot([0, 1], [1, 1], color="navy", linestyle=":")
+
+plt.plot(fprt, tprt, color="blue", label="Model - train, AUC = %0.2f" % auc_roct)
+plt.plot(fprv, tprv, color="gray", label="Model - val, AUC = %0.2f" % auc_rocv)
+plt.legend(loc="lower right");
+
+Logistic regression with LASSO regularization on the first selected dataset (theory dataset)
+
+Create AUC function for lambda tuning
+
+def model_auc(model, X_train, X_test, y_train, y_test):
+    trained_model = model.fit(X_train, y_train)
+    return roc_auc_score(y_test, trained_model.predict_proba(X_test)[:, 1])
+
+cs = np.linspace(0.001, 0.2, 100)
+
+Perform lambda tuning
+
+LRT_L1 = partial(LogisticRegression, penalty="l1", max_iter=10000, solver="liblinear")
+aucs_LRT_L1 = [model_auc(LRT_L1(C=c), X_train_resampledt, X_test_scaledt, y_train_resampledt, y_testt) for c in cs]
+
+Visualise AUC and lambda
+
+p = sns.lineplot(x=cs, y=aucs_LRT_L1)
+p.set_xlabel("C")
+p.set_ylabel("AUC")
+p.set_title("Logistic regression with L1 penalty");
+
+Selected lambda value for the highest AUC
+
+cs_array = np.array(cs)
+aucs_array = np.array(aucs_LRT_L1)
+
+max_idx = np.argmax(aucs_array)
+
+best_c = cs_array[max_idx]
+best_auc = aucs_array[max_idx]
+
+print(f"Highest AUC L1: {best_auc:.4f} for C = {best_c}")
+
+Peform cross validation
+
+def auc_scorer(model, X, y):
+    return roc_auc_score(y, model.predict_proba(X)[:, 1])
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LRT_L1(C=0.04723232323232324))
+])
+
+scores_l1 = cross_val_score(
+    pipeline,
+    Xt, yt,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_l1)
+print(f"Mean AUC score L1: {np.mean(scores_l1):.3f}")
+
+Train the final LASSO model
+
+model_L1 = LogisticRegression(penalty="l1", max_iter=10000, solver="liblinear", C=0.04723232323232324)
+
+L1 = model_L1.fit(X_train_resampledt, y_train_resampledt)
+
+Calculate model AUC
+
+l1_auc = roc_auc_score(y_testt, L1.predict_proba(X_test_scaledt)[:, 1])
+print(f"AUC for logistic regression L1: {l1_auc:.3f}")
+
+Calculate model confusion matrix
+
+y_test_scaled_hatt = L1.predict(X_test_scaledt)
+confm_l1 = confusion_matrix(y_testt, y_test_scaled_hatt)
+confm_l1
+
+Calculate accuracy, precision, recall and F1 score
+
+ACC_l1 = (confm_l1[0, 0] + confm_l1[1, 1]) / np.sum(confm_l1)
+PREC_l1 = (confm_l1[1, 1]) / (confm_l1[1, 1] + confm_l1[0, 1])
+REC_l1 = (confm_l1[1, 1]) / (confm_l1[1, 1] + confm_l1[1, 0])
+F1_l1 = 2 * PREC_l1 * REC_l1 / (PREC_l1 + REC_l1)
+print("ACC ", ACC_l1, "\nPREC ", PREC_l1, "\nREC ", REC_l1, "\nF1 ", F1_l1)
+
+ROC and AUC visual
+
+y_train_hat = L1.predict_proba(X_train_resampledt)[:,1]
+y_test_hat = L1.predict_proba(X_test_scaledt)[:,1]
+fprv, tprv, _ = roc_curve(y_testt, y_test_hat)
+fprt, tprt, _ = roc_curve(y_train_resampledt, y_train_hat)
+auc_rocv = auc(fprv, tprv)
+auc_roct = auc(fprt, tprt)
+
+plt.figure()
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC+AUC")
+
+plt.plot([0, 1], [0, 1], color="grey", linestyle="--", label="Random, AUC = 0.5")
+plt.plot([0, 0], [0, 1], color="navy", linestyle=":", label="Wizard, AUC = 1.0")
+plt.plot([0, 1], [1, 1], color="navy", linestyle=":")
+
+plt.plot(fprt, tprt, color="blue", label="Model - train, AUC = %0.2f" % auc_roct)
+plt.plot(fprv, tprv, color="grey", label="Model - val, AUC = %0.2f" % auc_rocv)
+plt.legend(loc="lower right");
+
+Calculate quality metrics on training and testing subsets
+
+y_train_pred = model_L1.predict(X_train_resampledt)
+y_test_pred = model_L1.predict(X_test_scaledt)
+
+train_acc = accuracy_score(y_train_resampledt, y_train_pred)
+train_prec = precision_score(y_train_resampledt, y_train_pred)
+train_rec = recall_score(y_train_resampledt, y_train_pred)
+train_f1 = f1_score(y_train_resampledt, y_train_pred)
+
+test_acc = accuracy_score(y_testt, y_test_pred)
+test_prec = precision_score(y_testt, y_test_pred)
+test_rec = recall_score(y_testt, y_test_pred)
+test_f1 = f1_score(y_testt, y_test_pred)
+
+print("TRAIN:")
+print(f"Accuracy: {train_acc:.4f}, Precision: {train_prec:.4f}, Recall: {train_rec:.4f}, F1: {train_f1:.4f}")
+print("TEST:")
+print(f"Accuracy: {test_acc:.4f}, Precision: {test_prec:.4f}, Recall: {test_rec:.4f}, F1: {test_f1:.4f}")
+
+Get out positive and negative features
+
+coefsL1 = L1.coef_[0]
+interceptL1 = L1.intercept_[0]
+odds_ratiosL1 = np.exp(coefsL1)
+feature_namesL1 = Xt.columns
+
+summaryL1 = pd.DataFrame({
+    'Feature': feature_namesL1,
+    'Coef': coefsL1,
+    'OddsRatio': odds_ratiosL1
+})
+
+positive_features_L1 = summaryL1[summaryL1['OddsRatio'] > 1]
+positive_features_L1_max = positive_features_L1.sort_values(by='OddsRatio', ascending=False)
+positive_features_L1_max.head(20)
+
+negative_features_L1 = summaryL1[summaryL1['OddsRatio'] < 1]
+negative_features_L1_max = negative_features_L1.sort_values(by='OddsRatio', ascending=True)
+negative_features_L1_max.head(20)
+
+Logistic regression with RIDGE regularisation on the first selected dataset (theory dataset)
+
+Perform lambda tuning
+
+aucs_l2 = [
+    model_auc(LogisticRegression(C=c, max_iter=10000, penalty='l2'), X_train_resampledt, X_test_scaledt, y_train_resampledt, y_testt)
+    for c in cs
+]
+
+Visualise AUC and lambda
+
+pl2 = sns.lineplot(x=cs, y=aucs_l2)
+pl2.set_xlabel("C")
+pl2.set_ylabel("AUC")
+pl2.set_title("Logistic regression with L2 penalty");
+
+Selected lambda with the highest AUC
+
+cs_array = np.array(cs)
+aucs_arrayl2 = np.array(aucs_l2)
+
+max_idxl2 = np.argmax(aucs_arrayl2)
+
+best_cl2 = cs_array[max_idxl2]
+best_aucl2 = aucs_arrayl2[max_idxl2]
+
+print(f"Najwyższe AUC L2: {best_aucl2:.4f} dla C = {best_cl2}")
+
+Perform cross validation
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LogisticRegression(C=0.001, max_iter=10000, penalty='l2'))
+])
+
+scores_l2 = cross_val_score(
+    pipeline,
+    Xt, yt,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_l2)
+print(f"Mean AUC score L2: {np.mean(scores_l2):.3f}")
+
+Logistic regression with elasticnet regularization on the first selected dataset (theory model)
+
+Lambda tuning
+
+LR_EL = partial(LogisticRegression, penalty='elasticnet',solver='saga', max_iter = 10000, l1_ratio=0.5)
+
+aucs_el = [
+    model_auc(LR_EL(C=c), X_train_resampledt, X_test_scaledt, y_train_resampledt, y_testt)
+    for c in cs
+]
+
+Lambda and AUC visual
+
+p_el = sns.lineplot(x=cs, y=aucs_el)
+p_el.set_xlabel("C")
+p_el.set_ylabel("AUC")
+p_el.set_title("Logistic regression with elasticnet penalty");
+
+Select lambda with the highest AUC
+
+cs_array = np.array(cs)
+aucs_array_el = np.array(aucs_el)
+
+max_idx_el = np.argmax(aucs_array_el)
+
+best_c_el = cs_array[max_idx_el]
+best_auc_el = aucs_array_el[max_idx_el]
+
+print(f"Highest AUC elasticnet: {best_auc_el:.4f} dla C = {best_c_el}")
+
+Perform cross validation
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LR_EL(C=0.01306060606060606))
+])
+
+scores_el = cross_val_score(
+    pipeline,
+    Xt, yt,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_el)
+print(f"Mean AUC score EL: {np.mean(scores_el):.3f}")
+
+Train the final model
+
+model_EL = LogisticRegression(penalty='elasticnet',solver='saga', max_iter = 10000, l1_ratio=0.5, C = 0.01306060606060606)
+
+EL = model_EL.fit(X_train_resampledt, y_train_resampledt)
+
+el_auc = roc_auc_score(y_testt, EL.predict_proba(X_test_scaledt)[:, 1])
+print(f"AUC for logistic regression EL: {el_auc:.3f}")
+
+y_test_scaled_res_hatt = EL.predict(X_test_scaledt)
+confm_el = confusion_matrix(y_testt, y_test_scaled_res_hatt)
+confm_el
+
+ACC_el = (confm_el[0, 0] + confm_el[1, 1]) / np.sum(confm_el)
+PREC_el = (confm_el[1, 1]) / (confm_el[1, 1] + confm_el[0, 1])
+REC_el = (confm_el[1, 1]) / (confm_el[1, 1] + confm_el[1, 0])
+F1_el = 2 * PREC_el * REC_el / (PREC_el + REC_el)
+print("ACC ", ACC_el, "\nPREC ", PREC_el, "\nREC ", REC_el, "\nF1 ", F1_el)
+
+y_train_hat = EL.predict_proba(X_train_resampledt)[:,1]
+y_test_hat = EL.predict_proba(X_test_scaledt)[:,1]
+fprv, tprv, _ = roc_curve(y_testt, y_test_hat)
+fprt, tprt, _ = roc_curve(y_train_resampledt, y_train_hat)
+auc_rocv = auc(fprv, tprv)
+auc_roct = auc(fprt, tprt)
+
+plt.figure()
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC+AUC")
+
+plt.plot([0, 1], [0, 1], color="grey", linestyle="--", label="Random, AUC = 0.5")
+plt.plot([0, 0], [0, 1], color="navy", linestyle=":", label="Wizard, AUC = 1.0")
+plt.plot([0, 1], [1, 1], color="navy", linestyle=":")
+
+plt.plot(fprt, tprt, color="blue", label="Model - train, AUC = %0.2f" % auc_roct)
+plt.plot(fprv, tprv, color="grey", label="Model - val, AUC = %0.2f" % auc_rocv)
+plt.legend(loc="lower right");
+
+prob_EL_t = np.mean(y_test_hat)
+print(f"Average probability of 1 class in the elasticnet model on theory dataset: {prob_EL_t}")
+
+y_train_pred_el = model_EL.predict(X_train_resampledt)
+y_test_pred_el = model_EL.predict(X_test_scaledt)
+
+train_acc_el = accuracy_score(y_train_resampledt, y_train_pred_el)
+train_prec_el = precision_score(y_train_resampledt, y_train_pred_el)
+train_rec_el = recall_score(y_train_resampledt, y_train_pred_el)
+train_f1_el = f1_score(y_train_resampledt, y_train_pred_el)
+
+test_acc_el = accuracy_score(y_testt, y_test_pred_el)
+test_prec_el = precision_score(y_testt, y_test_pred_el)
+test_rec_el = recall_score(y_testt, y_test_pred_el)
+test_f1_el = f1_score(y_testt, y_test_pred_el)
+
+print("TRAIN:")
+print(f"Accuracy: {train_acc_el:.4f}, Precision: {train_prec_el:.4f}, Recall: {train_rec_el:.4f}, F1: {train_f1_el:.4f}")
+print("TEST:")
+print(f"Accuracy: {test_acc_el:.4f}, Precision: {test_prec_el:.4f}, Recall: {test_rec_el:.4f}, F1: {test_f1_el:.4f}")
+
+Get out positive and negative features
+
+coefsEL = EL.coef_[0]
+interceptEL = EL.intercept_[0]
+odds_ratiosEL = np.exp(coefsEL)
+feature_namesEL = Xt.columns
+
+summaryEL = pd.DataFrame({
+    'Feature': feature_namesEL,
+    'Coef': coefsEL,
+    'OddsRatio': odds_ratiosEL
+})
+
+positive_features_EL = summaryEL[summaryEL['OddsRatio'] > 1]
+positive_features_EL_max = positive_features_EL.sort_values(by='OddsRatio', ascending=False)
+positive_features_EL_max
+
+negative_features_EL = summaryEL[summaryEL['OddsRatio'] < 1]
+negative_features_EL_max = negative_features_EL.sort_values(by='OddsRatio', ascending=True)
+negative_features_EL_max
+
+Comparison of models on theory dataset
+
+print(f"Highest AUC L1: {best_auc:.4f} dla C = {best_c}")
+print(f"Highest AUC L2: {best_aucl2:.4f} dla C = {best_cl2}")
+print(f"Highest AUC elasticnet: {best_auc_el:.4f} dla C = {best_c_el}")
+
+print(f"Mean AUC score L1: {np.mean(scores_l1):.3f}")
+print(f"Mean AUC score L2: {np.mean(scores_l2):.3f}")
+print(f"Mean AUC score EL: {np.mean(scores_el):.3f}")
+
+ 
+
+2. Optimalization models
+
+Upload the full dataset (all variables)
+
+df_complete_pl = pd.read_csv('df_complete_ohe_pl.csv')
+
+df_complete_pl
+
+Create target variable
+
+df_complete_pl['target'] = 0
+
+cond1 = ((df_complete_pl['a870_employed or self-employed'] == 1.0) |
+         (df_complete_pl['a870_helping family member in a family business or a farm'] == 1.0) |
+         (df_complete_pl['a870_student, in school, in vocational training'] == 1.0))
+
+cond2 = (((df_complete_pl['a870_looking after the home or family'] == 1.0) |
+         (df_complete_pl['a870_on maternity leave, parental leave or childcare leave'] == 1.0) |
+         (df_complete_pl['a870_unemployed'] == 1.0)) & (df_complete_pl['a874_bin_1'] == 1.0))
+
+df_complete_pl['target'] = np.where(cond1 | cond2, 1, 0)
+
+columns_to_drop = [
+    'a870_employed or self-employed',
+    'a870_helping family member in a family business or a farm',
+    'a870_student, in school, in vocational training',
+    'a870_looking after the home or family',
+    'a870_on maternity leave, parental leave or childcare leave',
+    'a870_unemployed',
+    'a874_bin_1',
+    'a874_bin_0',
+    'ahg8_1_employed or self-employed',
+    'ahg8_1_helping family member in a family business or a farm',
+    'ahg8_1_ill or disabled for a long time or permanently',
+    'ahg8_1_looking after the home or family',
+    'ahg8_1_on maternity leave, parental leave or childcare leave',
+    'ahg8_1_student, in school, in vocational training',
+    'ahg8_1_unemployed']
+
+df_complete_pl.drop(columns=columns_to_drop, inplace=True)
+
+df_complete_pl.shape
+
+df_complete_pl['target'].value_counts()
+
+Split the dataset for training and testing
+
+X = df_complete_pl.drop(["target"], axis=1)
+y = df_complete_pl["target"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+Data scaling
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+Oversampling of target variable
+
+ros = RandomOverSampler(random_state=1)
+X_train_resampled, y_train_resampled = ros.fit_resample(X_train_scaled, y_train)
+print(Counter(y_train_resampled))
+
+X_train -> X_train_resampled
+X_test -> X_test_scaled
+y_train -> y_train_resampled
+y_test
+Logistic regression with LASSO regularization on the full dataset
+
+FInd lambda with best AUC
+
+LR_L1_full = partial(LogisticRegression, penalty="l1", max_iter=10000, solver="liblinear")
+aucs_L1_full = [model_auc(LR_L1_full(C=c), X_train_resampled, X_test_scaled, y_train_resampled, y_test) for c in cs]
+
+p_l1full = sns.lineplot(x=cs, y=aucs_L1_full)
+p_l1full.set_xlabel("C")
+p_l1full.set_ylabel("AUC")
+p_l1full.set_title("Logistic regression with L1 penalty");
+
+cs_array = np.array(cs)
+aucs_array_l1full = np.array(aucs_L1_full)
+
+max_idx_l1full = np.argmax(aucs_array_l1full)
+
+best_c_l1full = cs_array[max_idx_l1full]
+best_auc_l1full = aucs_array[max_idx_l1full]
+
+print(f"Highest AUC L1 penalty on full data: {best_auc_l1full:.4f} dla C = {best_c_l1full}")
+
+Cross validation
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LogisticRegression(C=0.02914141414141414, max_iter=10000, penalty='l1',solver="liblinear"))
+])
+
+scores_l1_full = cross_val_score(
+    pipeline,
+    X, y,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_l1_full)
+print(f"Mean AUC score L1 full data: {np.mean(scores_l1_full):.3f}")
+
+Logistic regression with RIDGE regularization on the full dataset
+
+Find lambda with best AUC
+
+aucs_l2_full = [
+    model_auc(LogisticRegression(C=c, max_iter=10000, penalty='l2'), X_train_resampled, X_test_scaled, y_train_resampled, y_test)
+    for c in cs
+]
+
+p_l2full = sns.lineplot(x=cs, y=aucs_l2_full)
+p_l2full.set_xlabel("C")
+p_l2full.set_ylabel("AUC")
+p_l2full.set_title("Logistic regression with L2 penalty");
+
+cs_array = np.array(cs)
+aucs_array_l2full = np.array(aucs_l2_full)
+
+max_idx_l2full = np.argmax(aucs_l2_full)
+
+best_c_l2full = cs_array[max_idx_l2full]
+best_auc_l2full = aucs_array_l2full[max_idx_l2full]
+
+print(f"Highest AUC L2 penatly full data: {best_auc_l2full:.4f} dla C = {best_c_l2full}")
+
+Cross validation
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LogisticRegression(C=0.001, max_iter=10000, penalty='l2'))
+])
+
+scores_l2_full = cross_val_score(
+    pipeline,
+    X, y,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_l2_full)
+print(f"Mean AUC score L2 full data: {np.mean(scores_l2_full):.3f}")
+
+Logistic regression with elasticnet regularization on the full dataset
+
+Find lambda with best AUC
+
+aucs_el_full = [
+    model_auc(LR_EL(C=c), X_train_resampled, X_test_scaled, y_train_resampled, y_test)
+    for c in cs
+]
+
+p_elfull = sns.lineplot(x=cs, y=aucs_el_full)
+p_elfull.set_xlabel("C")
+p_elfull.set_ylabel("AUC")
+p_elfull.set_title("Logistic regression with elasticnet penalty");
+
+cs_array = np.array(cs)
+aucs_array_elfull = np.array(aucs_el_full)
+
+max_idx_elfull = np.argmax(aucs_array_elfull)
+
+best_c_elfull = cs_array[max_idx_elfull]
+best_auc_elfull = aucs_array_elfull[max_idx_elfull]
+
+print(f"Highest AUC elasticnet penalty full data: {best_auc_elfull:.4f} dla C = {best_c_elfull}")
+
+Cross validation
+
+folds = 5
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ros', RandomOverSampler(random_state=1)),
+    ('clf', LR_EL(C=0.01306060606060606))
+])
+
+scores_el_full = cross_val_score(
+    pipeline,
+    X, y,
+    cv=folds,
+    scoring=auc_scorer  
+)
+
+print(scores_el_full)
+print(f"Mean AUC score EL full data: {np.mean(scores_el_full):.3f}")
+
+Train the final model
+
+model_EL_full = LogisticRegression(penalty='elasticnet',solver='saga', max_iter = 10000, l1_ratio=0.5, C = 0.01306060606060606)
+
+EL_full = model_EL_full.fit(X_train_resampled, y_train_resampled)
+
+elfull_auc = roc_auc_score(y_test, EL_full.predict_proba(X_test_scaled)[:, 1])
+print(f"AUC for logistic regression EL full data: {elfull_auc:.3f}")
+
+y_train_hat = EL_full.predict_proba(X_train_resampled)[:,1]
+y_test_hat_f = EL_full.predict_proba(X_test_scaled)[:,1]
+fprv, tprv, _ = roc_curve(y_test, y_test_hat_f)
+fprt, tprt, _ = roc_curve(y_train_resampled, y_train_hat)
+auc_rocv = auc(fprv, tprv)
+auc_roct = auc(fprt, tprt)
+
+plt.figure()
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC+AUC")
+
+plt.plot([0, 1], [0, 1], color="grey", linestyle="--", label="Random, AUC = 0.5")
+plt.plot([0, 0], [0, 1], color="navy", linestyle=":", label="Wizard, AUC = 1.0")
+plt.plot([0, 1], [1, 1], color="navy", linestyle=":")
+
+plt.plot(fprt, tprt, color="blue", label="Model - train, AUC = %0.2f" % auc_roct)
+plt.plot(fprv, tprv, color="grey", label="Model - val, AUC = %0.2f" % auc_rocv)
+plt.legend(loc="lower right");
+
+prob_EL_f = np.mean(y_test_hat_f)
+print(f"Average probability of class 1 in elasticnet model on full dataset: {prob_EL_f}")
+
+Calculate accuracy, precision, recall, F1 on training and testing subsets
+
+y_train_pred_elfull = EL_full.predict(X_train_resampled)
+y_test_pred_elfull = EL_full.predict(X_test_scaled)
+
+train_acc_elfull = accuracy_score(y_train_resampled, y_train_pred_elfull)
+train_prec_elfull = precision_score(y_train_resampled, y_train_pred_elfull)
+train_rec_elfull = recall_score(y_train_resampled, y_train_pred_elfull)
+train_f1_elfull = f1_score(y_train_resampled, y_train_pred_elfull)
+
+test_acc_elfull = accuracy_score(y_test, y_test_pred_elfull)
+test_prec_elfull = precision_score(y_test, y_test_pred_elfull)
+test_rec_elfull = recall_score(y_test, y_test_pred_elfull)
+test_f1_elfull = f1_score(y_test, y_test_pred_elfull)
+
+print("TRAIN:")
+print(f"Accuracy: {train_acc_elfull:.4f}, Precision: {train_prec_elfull:.4f}, Recall: {train_rec_elfull:.4f}, F1: {train_f1_elfull:.4f}")
+print("TEST:")
+print(f"Accuracy: {test_acc_elfull:.4f}, Precision: {test_prec_elfull:.4f}, Recall: {test_rec_elfull:.4f}, F1: {test_f1_elfull:.4f}")
+
+Get out positive and negative features
+
+coefsELF = EL_full.coef_[0]
+interceptELF = EL_full.intercept_[0]
+odds_ratiosELF = np.exp(coefsELF)
+feature_namesELF = X.columns
+
+summaryELF = pd.DataFrame({
+    'Feature': feature_namesELF,
+    'Coef': coefsELF,
+    'OddsRatio': odds_ratiosELF
+})
+
+positive_features_ELF = summaryELF[summaryELF['OddsRatio'] > 1]
+positive_features_ELF_max = positive_features_ELF.sort_values(by='OddsRatio', ascending=False)
+positive_features_ELF_max
+
+negative_features_ELF = summaryELF[summaryELF['OddsRatio'] < 1]
+negative_features_ELF_max = negative_features_ELF.sort_values(by='OddsRatio', ascending=True)
+negative_features_ELF_max.head(30)
+
+chosen_features_elf = (summaryELF[summaryELF['Coef'] != 0])['Feature'].tolist()
+
+Comparison of models on full dataset
+
+print(f"Highest AUC L1 penalty on full data: {best_auc_l1full:.4f} dla C = {best_c_l1full}")
+print(f"Highest AUC L2 penatly full data: {best_auc_l2full:.4f} dla C = {best_c_l2full}")
+print(f"Highest AUC elasticnet penalty full data: {best_auc_elfull:.4f} dla C = {best_c_elfull}")
+
+print(f"Mean AUC score L1 full data: {np.mean(scores_l1_full):.3f}")
+print(f"Mean AUC score L2 full data: {np.mean(scores_l2_full):.3f}")
+print(f"Mean AUC score EL full data: {np.mean(scores_el_full):.3f}")
+
+Compare the theory based dataset and features chosen from full dataset
+
+chosen_features_elf
+
+len(chosen_features_elf)
+
+wspolne_th_elf = list(set(df_th_ohe.columns)&set(chosen_features_elf))
+wspolne_th_elf
+
+len(wspolne_th_elf)
+
+added_df_th_elf = list(set(chosen_features_elf) - set(df_th_ohe.columns))
+added_df_th_elf
+
+len(added_df_th_elf)
+
+3. Updated theory based models (more variables added)
+
+Upload the dataset, choose the variables, create target variable
+
+df_complete_pl = pd.read_csv('df_complete_pl.csv')
+
+theory_pl2_cols = [ 'aage', 'aeduc', 'aparstat', 'amarstat', 'a201a_a', 'a201a_b', 'a201a_c', 'a201a_d', 'a201a_e', 'a201a_f',
+'a202', 'a203a', 'a203b_1', 'a203c_1', 'a204a', 'a204b_1', 'a204c_1', 'a205', 'a302a', 'a372bAgeR', 'a401a_a', 'a401a_b', 
+'a401a_c', 'a401a_d_2600', 'a401a_e', 'a401a_f','a401a_g', 'a402','a405a_a', 'a405a_b','a405a_c', 'a405a_d', 'a405a_e', 
+'a405a_f', 'a501_2600', 'a627_b', 'a627_c', 'a627_e', 'a627_f', 'a627_j', 'a628_a', 'a628_b', 'a628_h', 'a628_i',
+'a629_a', 'a629_b', 'a629_c', 'a844', 'a845', 'a847', 'a839', 'a1002', 'a1008', 'a1107_e', 'a1110_b', 'a1110_c',
+'a1113_e', 'a1113_f', 'a1109_1', 'a1109_2', 'a1109_3', 'a874_bin', 'a870']
+
+theory_pl2 = df_complete_pl[theory_pl2_cols].copy()
+
+theory_pl2['target'] = 0
+
+condition12 = (
+    (theory_pl2['a870'] == 'employed or self-employed') |
+    (theory_pl2['a870'] == 'helping family member in a family business or a farm') |
+    (theory_pl2['a870'] == 'student, in school, in vocational training')
+)
+
+condition22 = (
+    (theory_pl2['a870'].isin([
+        'looking after the home or family',
+        'on maternity leave, parental leave or childcare leave',
+        'unemployed'
+    ])) & (theory_pl2['a874_bin'] == 1.0)
+)
+
+theory_pl2['target'] = np.where(condition12 | condition22, 1, 0)
+
+cols_to_drop_t2 = theory_pl2[[col for col in theory_pl2.columns if col.startswith('a870')]]
+
+theory_pl2 = theory_pl2.drop(cols_to_drop_t2, axis=1).copy()
+
+theory_pl2 = theory_pl2.drop('a874_bin', axis=1).copy()
+
+df = theory_pl2.copy()
+
+Encode categorical data
+
+df1 = pd.get_dummies(df, drop_first=True)
+
+for col in df.select_dtypes(include='object').columns:
+    df[col]=df[col].astype('category')
+
+Get out reference categories of variables
+
+for col in df.select_dtypes(include='category').columns:
+    print(f"{col}: {list(df[col].cat.categories)}")
+    print(f"Reference category: {df[col].cat.categories[0]}\n")
+
+df1 = df1.astype(int)
+
+var_prefix = ['aeduc', 'amarstat', 'a202', 'a203a', 'a203b_1', 'a203c_1', 'a205',
+              'a627_b', 'a628_h', 'a628_i', 'a629_a', 'a629_b', 'a629_c', 'a844',
+              'a845', 'a1107_e', 'a1110_b', 'a1110_c', 'a1113_e', 'a1113_f', 'a1109_1']
+
+Function to fit the logit model for variables with chosen prefix
+
+def fit_logit_model_by_prefix(df, prefix, target_name='target'):
+    
+    column_names = [col for col in df.columns if col.startswith(prefix)]
+    
+    if not column_names:
+        raise ValueError(f"Column with prefix not found: '{prefix}'")
+
+    results = {}
+
+    for column in column_names:
+        try:
+            X = df[[column]].copy()
+            y = df[target_name]
+            X = sm.add_constant(X)
+
+            model = sm.Logit(y, X)
+            result = model.fit(disp=False)
+
+            print(f"\n Results for column: {column}")
+            print(result.summary())
+
+            results[column] = result
+
+        except (linalg.LinAlgError, PerfectSeparationError) as e:
+            print(f" Skipped column '{column}' error: {e}")
+
+    return results
+
+for prefix in var_prefix:
+    fit_logit_model_by_prefix(df1, prefix)
+
+df1_var = df1[["aeduc_isced 5 - first stage of tertiary","aeduc_isced 3 - upper secondary level",
+"a203a_yes","a205","a629_a_strongly disagree","a629_c_neither agree nor disagree",
+"a629_c_strongly disagree","a845_permanent","a845_no written contract","a1107_e_strongly agree",
+"a1113_e_disagree","a1113_f_disagree","target"]].copy()
+
+Function to calculate VIF
+
+def fit_logit_model_vif(df, column_names, target_name='target'):
+    if isinstance(column_names, str):
+        column_names = [column_names]
+
+    X = df[column_names].copy()
+    y = df[target_name]
+    X = sm.add_constant(X)
+
+    if len(column_names) > 1:
+        print("\n VIF (Variance Inflation Factor):")
+        vif_data = pd.DataFrame()
+        vif_data["Variable"] = X.columns
+        vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+        print(vif_data)
+    
+    model = sm.Logit(y, X)
+    result = model.fit()
+    
+    print(result.summary())
+    
+    return result
+
+Function to fit a model with chosen variables and calculate metrics
+
+def fit_logit_model_auc(df, column_names, target_name='target', test_size=0.3, random_state=42):
+    if isinstance(column_names, str):
+        column_names = [column_names]
+
+    X = df[column_names].copy()
+    y = df[target_name]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+
+    X_train_const = sm.add_constant(X_train)
+    X_test_const = sm.add_constant(X_test)
+
+    model = sm.Logit(y_train, X_train_const)
+    result = model.fit()
+
+    print("\nModel summary (train data):")
+    print(result.summary())
+
+    y_pred_prob = result.predict(X_test_const)
+    y_pred_class = (y_pred_prob >= 0.5).astype(int)
+    mean_prob = np.mean(y_pred_prob)
+
+    print("\n--- Model evaluation on test set ---")
+    print(f"AUC: {roc_auc_score(y_test, y_pred_prob):.4f}")
+    print(f"Accuracy: {accuracy_score(y_test, y_pred_class):.4f}")
+    print(f"Precision: {precision_score(y_test, y_pred_class):.4f}")
+    print(f"Recall: {recall_score(y_test, y_pred_class):.4f}")
+    print(f"F1 Score: {f1_score(y_test, y_pred_class):.4f}")
+    print("Confusion Matrix:")
+    print(confusion_matrix(y_test, y_pred_class))
+    print(f"Average probability of class 1: {mean_prob}")
+
+    return result
+
+Fit model for chosen variables
+
+fit_logit_model_auc(df1, ['amarstat_married','a202','a203a_yes','a203b_1_babysitter (nanny)',
+                          'a203b_1_nursery or pre-school','a203c_1',
+                          'a205','a627_b_neither better nor worse','a627_b_worse','a628_i_quite a lot','a629_b_strongly disagree',
+                          'a629_c_strongly disagree','a1110_b_more a task for the family than for society',
+                          'a1113_e_strongly agree','a1113_f_strongly agree'])
+
+kolumny = [kol for kol in df1.columns if kol.startswith('a1113_f')]
+kolumny
+
+Fit models
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","aeduc_isced 3 - upper secondary level",
+"a203a_yes","a205","a629_a_strongly disagree","a629_c_neither agree nor disagree",
+"a629_c_strongly disagree","a845_permanent","a845_no written contract","a1107_e_strongly agree",
+"a1113_e_disagree","a1113_f_disagree"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary", "a845_permanent"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary", "a845_permanent"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary", "a845_no written contract"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a205"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a205"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", "a629_a_strongly disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", "a629_a_strongly disagree"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a629_c_strongly disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a629_c_strongly disagree"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1107_e_strongly agree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1107_e_strongly agree"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1113_e_disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1113_e_disagree"])
+
+fit_logit_model_vif(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1113_e_disagree", "a1113_f_disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1113_e_disagree", "a1113_f_disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","aeduc_isced 3 - upper secondary level",
+"a203a_yes","a205","a629_a_strongly disagree","a629_c_neither agree nor disagree",
+"a629_c_strongly disagree","a845_permanent","a845_no written contract","a1107_e_strongly agree",
+"a1113_e_disagree","a1113_f_disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", 
+                              "a629_a_strongly disagree", "a1113_e_disagree"])
+
+fit_logit_model_auc(df1_var, ["aeduc_isced 5 - first stage of tertiary","a203a_yes", "a845_no written contract", "a1113_e_disagree"])
+
+ 
+
+ 
+
+ 
+
+!pip freeze > requirements_pl.txt
+
+ 
+

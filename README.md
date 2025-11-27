@@ -1,10 +1,11 @@
 ## Kamila's Data Analytics Portfolio
 
-### Project 1: Master Thesis Project PLACEHOLDER*
-- *The project cannot be published until the thesis is defended.
+### Project 1: Master Thesis Project
 - This project was undertaken with a goal of contributing to research regarding factors influencing women to join or re-join the workforce after childbirth in Poland and the Czech Republic.
 - Data used in the project was obtained through the [Generations and Gender Programme Institution](https://www.ggp-i.org/generations-and-gender-survey/) after obtaining access through required permits.
 - Algorithms Used in the project: Logistic Regression using the Statsmodels Python package, Logistic Regression with ElastiNet Regularization using the Scikit-learn Python package. Additionally, data was first imputed with the MICE method.
+- The code for analysis of Poland can be accessed [here](https://github.com/Kamila-AK/Kamila_Portfolio/blob/main/Master%20Project%20PL).
+- The requirements for analysis of Poland are [here](https://github.com/Kamila-AK/Kamila_Portfolio/blob/main/requirements-PL).
 
 ### [Project 2: Student Data Visualization Project in R - Global IQ](https://kamila109507.shinyapps.io/kamila-projekt/)
 - The goal of this project was to create simple interactive data visualizations in R.
